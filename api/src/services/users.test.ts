@@ -673,6 +673,46 @@ describe('Integration Tests', () => {
 				expect(mailService.send).toBeCalledTimes(1);
 			});
 
+			it('should not re-send invites without permission to update the invited user', async () => {
+				const service = new UsersService({
+					knex: db,
+					schema: testSchema,
+					accountability: { role: null, admin: false },
+				});
+
+				vi.spyOn(UsersService.prototype as any, 'getUserByEmail').mockResolvedValueOnce({
+					id: 1,
+					status: 'invited',
+					role: 'invite-role',
+				});
+
+				await expect(service.inviteUser('user@example.com', 'invite-role', null)).rejects.toBeInstanceOf(
+					ForbiddenException
+				);
+
+				expect(mailService.send).not.toBeCalled();
+			});
+
+			it('should not re-send invites to a url outside of the allow list', async () => {
+				const service = new UsersService({
+					knex: db,
+					schema: testSchema,
+					accountability: { role: 'test', admin: true },
+				});
+
+				vi.spyOn(UsersService.prototype as any, 'getUserByEmail').mockResolvedValueOnce({
+					id: 1,
+					status: 'invited',
+					role: 'invite-role',
+				});
+
+				await expect(
+					service.inviteUser('user@example.com', 'invite-role', 'https://attacker.example.com/accept')
+				).rejects.toBeInstanceOf(InvalidPayloadException);
+
+				expect(mailService.send).not.toBeCalled();
+			});
+
 			it('should not re-send invites for users in state other than invited', async () => {
 				const service = new UsersService({
 					knex: db,

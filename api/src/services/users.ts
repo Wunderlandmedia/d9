@@ -14,6 +14,7 @@ import isUrlAllowed from '../utils/is-url-allowed.js';
 import { verifyJWT } from '../utils/jwt.js';
 import { stall } from '../utils/stall.js';
 import { Url } from '../utils/url.js';
+import { AuthorizationService } from './authorization.js';
 import { ItemsService } from './items.js';
 import { MailService } from './mail/index.js';
 import { SettingsService } from './settings.js';
@@ -366,6 +367,21 @@ export class UsersService extends ItemsService {
 				// For known users update role if changed
 			} else if (user.status === 'invited' && user.role !== role) {
 				await this.updateOne(user.id, { role }, opts);
+			} else if (user.status === 'invited') {
+				// Re-sending an unchanged invite writes nothing, so it has to pass the same checks before the mail goes out
+				if (this.accountability && this.accountability.admin !== true) {
+					const authorizationService = new AuthorizationService({
+						accountability: this.accountability,
+						schema: this.schema,
+						knex: this.knex,
+					});
+
+					await authorizationService.checkAccess('update', this.collection, user.id);
+				}
+
+				if (opts.preMutationException) {
+					throw opts.preMutationException;
+				}
 			}
 
 			// Send invite for new and already invited users

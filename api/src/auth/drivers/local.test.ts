@@ -1,5 +1,6 @@
 import type { SchemaOverview } from '@wbce-d9/types';
 import express, { type ErrorRequestHandler } from 'express';
+import jwt from 'jsonwebtoken';
 import type { Knex } from 'knex';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -102,13 +103,16 @@ function createApp() {
 	return app;
 }
 
+// Compares like MySQL/MariaDB's default accent-insensitive collation: `vïctïm` equals `victim`
+const fold = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '');
+
 function createDriver() {
 	// Only the lookup by email goes straight to knex
 	const knex = {
 		select: () => ({
 			from: () => ({
 				whereRaw: (_sql: string, [, email]: [string, string]) => ({
-					first: async () => accounts.find((account) => account.email.toLowerCase() === email),
+					first: async () => accounts.find((account) => fold(account.email.toLowerCase()) === fold(email)),
 				}),
 			}),
 		}),
@@ -228,6 +232,25 @@ describe('registerUser', () => {
 
 		expect(send).not.toHaveBeenCalled();
 	});
+
+	test('mails a pending account at its stored address, not the one typed in', async () => {
+		accounts.push({ id: 'user-1', email: 'New@Example.com', status: 'draft', provider: 'default', auth_data: null });
+
+		await createDriver().registerUser('default', input);
+
+		expect(send).toHaveBeenCalledTimes(1);
+		expect(send.mock.calls[0]![0].to).toBe('New@Example.com');
+		expect(jwt.decode(mailedToken())).toMatchObject({ email: 'New@Example.com' });
+	});
+
+	test('sends nothing for an accented look-alike of a pending address', async () => {
+		accounts.push({ id: 'user-1', email: 'victim@example.com', status: 'draft', provider: 'default', auth_data: null });
+
+		await createDriver().registerUser('default', { ...input, email: 'vïctïm@example.com' });
+
+		expect(send).not.toHaveBeenCalled();
+		expect(accounts).toHaveLength(1);
+	});
 });
 
 describe('verifyEmail', () => {
@@ -256,6 +279,18 @@ describe('verifyEmail', () => {
 		await driver.registerUser('default', input);
 
 		await expect(driver.verifyEmail('other', mailedToken())).rejects.toBeInstanceOf(ForbiddenException);
+		expect(accounts[0]!.status).toBe('draft');
+	});
+
+	test('rejects a token for an accented look-alike of the stored address', async () => {
+		accounts.push({ id: 'user-1', email: 'victim@example.com', status: 'draft', provider: 'default', auth_data: null });
+
+		const token = jwt.sign({ email: 'vïctïm@example.com', scope: 'register', provider: 'default' }, 'test', {
+			expiresIn: '1d',
+			issuer: 'directus',
+		});
+
+		await expect(createDriver().verifyEmail('default', token)).rejects.toBeInstanceOf(InvalidTokenException);
 		expect(accounts[0]!.status).toBe('draft');
 	});
 });

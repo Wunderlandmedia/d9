@@ -86,9 +86,9 @@ export class LocalAuthDriver extends AuthDriver {
 
 	private async getAccountByEmail(
 		email: string
-	): Promise<{ id: string; status: string; provider: string; auth_data: unknown } | undefined> {
+	): Promise<{ id: string; email: string; status: string; provider: string; auth_data: unknown } | undefined> {
 		return this.knex
-			.select('id', 'status', 'provider', 'auth_data')
+			.select('id', 'email', 'status', 'provider', 'auth_data')
 			.from('directus_users')
 			.whereRaw('LOWER(??) = ?', ['email', email.toLowerCase()])
 			.first();
@@ -168,6 +168,13 @@ export class LocalAuthDriver extends AuthDriver {
 			return;
 		}
 
+		// The lookup goes through the database collation, which on MySQL/MariaDB is accent-insensitive:
+		// `vïctïm@` finds the account stored as `victim@`. Only an address that is the stored one
+		// (ignoring case) may trigger a resend, so a look-alike can't pull the link to its own inbox.
+		if (existing && existing.email.toLowerCase() !== input.email.toLowerCase()) {
+			return;
+		}
+
 		if (existing && Date.now() - this.lastMailSentAt(existing.auth_data) < REGISTER_MAIL_INTERVAL) {
 			return;
 		}
@@ -206,14 +213,15 @@ export class LocalAuthDriver extends AuthDriver {
 
 		const mailService = new MailService({ knex: this.knex, schema: this.schema });
 
+		// Mail and token carry the address the account is stored under, never the one typed in.
 		await mailService.send({
-			to: input.email,
+			to: account.email,
 			subject: 'Please confirm your email address',
 			template: {
 				name: 'user-registration',
 				data: {
-					url: this.registerUrl(provider, input.email, url),
-					email: input.email,
+					url: this.registerUrl(provider, account.email, url),
+					email: account.email,
 				},
 			},
 		});
@@ -245,7 +253,12 @@ export class LocalAuthDriver extends AuthDriver {
 
 		const account = await this.getAccountByEmail(email);
 
-		if (account?.status !== 'draft' || account.provider.toLowerCase() !== provider.toLowerCase()) {
+		// The token must name exactly the stored address, not merely one the collation considers equal.
+		if (
+			account?.status !== 'draft' ||
+			account.email.toLowerCase() !== email.toLowerCase() ||
+			account.provider.toLowerCase() !== provider.toLowerCase()
+		) {
 			throw new InvalidTokenException('Token invalid.');
 		}
 

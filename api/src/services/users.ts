@@ -2,7 +2,7 @@ import { FailedValidationException } from '@wbce-d9/exceptions';
 import type { Query } from '@wbce-d9/types';
 import { getSimpleHash, toArray } from '@wbce-d9/utils';
 import jwt from 'jsonwebtoken';
-import { cloneDeep, isEmpty } from 'lodash-es';
+import { isEmpty } from 'lodash-es';
 import { performance } from 'perf_hooks';
 import getDatabase from '../database/index.js';
 import env from '../env.js';
@@ -315,25 +315,6 @@ export class UsersService extends ItemsService {
 
 		await super.deleteMany(keys, opts);
 		return keys;
-	}
-
-	override async deleteByQuery(query: Query, opts?: MutationOptions): Promise<PrimaryKey[]> {
-		const primaryKeyField = this.schema.collections[this.collection]!.primary;
-		const readQuery = cloneDeep(query);
-		readQuery.fields = [primaryKeyField];
-
-		// Not authenticated:
-		const itemsService = new ItemsService(this.collection, {
-			knex: this.knex,
-			schema: this.schema,
-		});
-
-		const itemsToDelete = await itemsService.readByQuery(readQuery);
-		const keys: PrimaryKey[] = itemsToDelete.map((item: Item) => item[primaryKeyField]);
-
-		if (keys.length === 0) return [];
-
-		return await this.deleteMany(keys, opts);
 	}
 
 	async inviteUser(email: string | string[], role: string, url: string | null, subject?: string | null): Promise<void> {

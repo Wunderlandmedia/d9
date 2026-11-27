@@ -76,14 +76,15 @@ export class ItemsService<Item extends AnyItem = AnyItem> implements AbstractSer
 		const readQuery = cloneDeep(query);
 		readQuery.fields = [primaryKeyField];
 
-		// Allow unauthenticated access
+		// Read with the caller's accountability: the filter may only use fields and rows they can read,
+		// or the keys it matches would reveal values hidden from them. `updateMany` / `deleteMany` then
+		// check update / delete access on the keys themselves.
 		const itemsService = new ItemsService(this.collection, {
 			knex: this.knex,
+			accountability: this.accountability,
 			schema: this.schema,
 		});
 
-		// We read the IDs of the items based on the query, and then run `updateMany`. `updateMany` does it's own
-		// permissions check for the keys, so we don't have to make this an authenticated read
 		const items = await itemsService.readByQuery(readQuery);
 		return items.map((item: AnyItem) => item[primaryKeyField]).filter((pk) => pk);
 	}

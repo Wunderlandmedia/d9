@@ -602,6 +602,11 @@ describe('Integration Tests', () => {
 		});
 
 		describe('deleteByQuery', () => {
+			// The updateByQuery tests above stub getKeysByQuery, which deleteByQuery relies on
+			beforeEach(() => {
+				vi.spyOn(ItemsService.prototype, 'getKeysByQuery').mockRestore();
+			});
+
 			it('should checkRemainingAdminExistence once', async () => {
 				const service = new UsersService({
 					knex: db,
@@ -624,6 +629,53 @@ describe('Integration Tests', () => {
 				}
 
 				expect(checkRemainingAdminExistenceSpy).toBeCalledTimes(1);
+			});
+
+			it('rejects a filter on a field the user cannot read', async () => {
+				const schema = {
+					...testSchema,
+					collections: {
+						directus_users: {
+							...testSchema.collections['directus_users']!,
+							fields: {
+								...testSchema.collections['directus_users']!.fields,
+								email: { ...testSchema.collections['directus_users']!.fields['id']!, field: 'email', type: 'string' },
+							},
+						},
+					},
+				} as SchemaOverview;
+
+				// May delete any user, but read only their id
+				const service = new UsersService({
+					knex: db,
+					schema,
+					accountability: {
+						role: 'test',
+						admin: false,
+						permissions: (['read', 'delete'] as const).map((action, id) => ({
+							id,
+							role: 'test',
+							collection: 'directus_users',
+							action,
+							permissions: {},
+							validation: {},
+							presets: {},
+							fields: action === 'read' ? ['id'] : ['*'],
+						})),
+					},
+				});
+
+				// A user matches the filter
+				tracker.reset();
+				tracker.on.select('directus_users').response([{ id: 1 }]);
+
+				const deleteManySpy = vi.spyOn(UsersService.prototype, 'deleteMany').mockResolvedValue([1]);
+
+				await expect(service.deleteByQuery({ filter: { email: { _starts_with: 'a' } } })).rejects.toBeInstanceOf(
+					ForbiddenException
+				);
+
+				expect(deleteManySpy).not.toHaveBeenCalled();
 			});
 		});
 
